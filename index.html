@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pokémon Ultimate Multiplayer Quiz</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+<style>
+body{font-family:Arial;background:linear-gradient(135deg,#ffcb05,#3b4cca);margin:0;color:#222}
+header{background:#ef5350;color:white;padding:1rem;text-align:center}
+section{max-width:900px;margin:1rem auto;background:white;padding:1rem;border-radius:12px;box-shadow:0 5px 15px rgba(0,0,0,.25)}
+img{max-width:280px;display:block;margin:1rem auto}
+.silhouette{filter:brightness(0) contrast(100%)}
+input,select,button{padding:.6rem;margin:.3rem;font-size:1rem}
+button{border:none;border-radius:8px;font-weight:bold;cursor:pointer}
+.score{font-weight:bold}
+
+/* Kahoot colors */
+.red{background:#e21b3c;color:white}
+.blue{background:#1368ce;color:white}
+.yellow{background:#d89e00;color:white}
+.green{background:#26890c;color:white}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.bar{height:30px;border-radius:8px;color:white;padding-left:10px;display:flex;align-items:center;margin:5px}
+</style>
+</head>
+
+<body>
+
+<header>
+<h1>Pokémon Ultimate Multiplayer Quiz</h1>
+<p>Guess • 151 Challenge • Kahoot-Style • Global Leaderboards</p>
+</header>
+
+<!-- ================= PLAYER ================= -->
+<section>
+<h2>Player</h2>
+<input id="playerName" placeholder="Your name">
+<button onclick="saveName()">Save</button>
+<div id="playerStatus"></div>
+</section>
+
+<!-- ================= GUESS MODE ================= -->
+<section>
+<h2>Guess the Pokémon</h2>
+<select id="difficulty">
+<option value="easy">Easy (Gen 1)</option>
+<option value="normal">Normal (All)</option>
+<option value="hard">Hard (Silhouette)</option>
+<option value="insane">Insane (Timer)</option>
+</select>
+<img id="pokeImg" class="silhouette">
+<input id="guessInput" placeholder="Pokémon name">
+<button onclick="checkGuess()">Guess</button>
+<p id="guessMsg"></p>
+<div class="score" id="guessScore">Score: 0</div>
+<div class="score" id="guessTimer"></div>
+</section>
+
+<!-- ================= 151 ================= -->
+<section>
+<h2>Guess the 151 Challenge</h2>
+<button onclick="start151()">Start Challenge</button>
+<div class="score" id="t151"></div>
+<div class="score" id="p151"></div>
+</section>
+
+<!-- ================= QUIZ ROOMS ================= -->
+<section>
+<h2>Multiplayer Quiz</h2>
+<input id="roomCode" placeholder="Room code">
+<button onclick="createRoom()">Host</button>
+<button onclick="joinRoom()">Join</button>
+<div id="roomStatus"></div>
+</section>
+
+<section>
+<h3>Question Builder (Host)</h3>
+<input id="qText" placeholder="Question">
+<input id="oA" placeholder="A">
+<input id="oB" placeholder="B">
+<input id="oC" placeholder="C">
+<input id="oD" placeholder="D">
+<select id="correct">
+<option value="0">A</option>
+<option value="1">B</option>
+<option value="2">C</option>
+<option value="3">D</option>
+</select>
+<button onclick="addQuestion()">Add</button>
+<button onclick="startQuiz()">Start Quiz</button>
+<button onclick="nextQuestion()">Next</button>
+<div id="hostQ"></div>
+<div id="hostTimer"></div>
+</section>
+
+<section>
+<h3>Answer</h3>
+<div id="answers" class="grid"></div>
+</section>
+
+<section>
+<h3>Results</h3>
+<div id="results"></div>
+</section>
+
+<!-- ================= LEADERBOARDS ================= -->
+<section>
+<h2>🌍 Global Leaderboards</h2>
+<h3>Guess the Pokémon</h3>
+<div id="lbGuess"></div>
+<h3>Guess the 151</h3>
+<div id="lb151"></div>
+<h3>Quiz</h3>
+<div id="lbQuiz"></div>
+</section>
+
+<script>
+/* ================= FIREBASE ================= */
+const firebaseConfig={
+ apiKey:"YOUR_API_KEY",
+ authDomain:"YOUR_PROJECT.firebaseapp.com",
+ databaseURL:"https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+ projectId:"YOUR_PROJECT",
+ storageBucket:"YOUR_PROJECT.appspot.com",
+ messagingSenderId:"YOUR_ID",
+ appId:"YOUR_APP_ID"
+};
+firebase.initializeApp(firebaseConfig);
+const db=firebase.database();
+
+/* ================= PLAYER ================= */
+let player=localStorage.getItem("player")||"";
+function saveName(){
+ player=playerName.value;
+ localStorage.setItem("player",player);
+ playerStatus.textContent=`Saved as ${player}`;
+}
+
+/* ================= GUESS GAME ================= */
+let list=[],current,score=0,time=0,timerInt;
+let g151=new Set(),t151v=900,t151int;
+
+async function loadPokemon(limit){
+ const r=await fetch(`https://pokeapi.co/api/v2/pokemon?limit=${limit}`);
+ list=(await r.json()).results;
+ nextPokemon();
+}
+async function nextPokemon(){
+ clearInterval(timerInt);
+ const p=list[Math.floor(Math.random()*list.length)];
+ current=await (await fetch(p.url)).json();
+ pokeImg.src=current.sprites.other['official-artwork'].front_default;
+ pokeImg.classList.toggle("silhouette",difficulty.value!=="easy");
+ if(difficulty.value==="insane")startTimer();
+}
+function checkGuess(){
+ if(guessInput.value.toLowerCase()===current.name){
+  score++;
+  guessScore.textContent=`Score: ${score}`;
+  db.ref(`leaderboards/guess/${player}`).set(score);
+  pokeImg.classList.remove("silhouette");
+  if(t151int&&!g151.has(current.name)){
+    g151.add(current.name);
+    update151();
+  }
+  setTimeout(nextPokemon,700);
+ }
+}
+function startTimer(){
+ time=10;guessTimer.textContent=`Time: ${time}`;
+ timerInt=setInterval(()=>{
+  time--;guessTimer.textContent=`Time: ${time}`;
+  if(time<=0){clearInterval(timerInt);setTimeout(nextPokemon,700)}
+ },1000);
+}
+difficulty.onchange=()=>{
+ score=0;guessScore.textContent="Score: 0";
+ loadPokemon(difficulty.value==="easy"?151:1300);
+};
+loadPokemon(151);
+
+/* ================= 151 ================= */
+function start151(){
+ g151.clear();t151v=900;loadPokemon(151);
+ clearInterval(t151int);
+ t151int=setInterval(()=>{
+  t151v--;update151();
+  if(t151v<=0){
+   clearInterval(t151int);
+   db.ref(`leaderboards/151/${player}`).set(g151.size);
+   alert(`Finished ${g151.size}/151`);
+  }
+ },1000);
+}
+function update151(){
+ t151.textContent=`Time: ${Math.floor(t151v/60)}:${String(t151v%60).padStart(2,"0")}`;
+ p151.textContent=`Progress: ${g151.size}/151`;
+}
+
+/* ================= QUIZ ================= */
+let room="",quiz=[],qi=-1,votes=[0,0,0,0],qt=15,qtInt,quizScore=0;
+
+function createRoom(){
+ room=Math.random().toString(36).substring(2,7).toUpperCase();
+ db.ref(`rooms/${room}`).set({quiz:[],current:-1,answers:{}});
+ roomStatus.textContent=`Room: ${room}`;
+ listenRoom();
+}
+function joinRoom(){
+ room=roomCode.value.toUpperCase();
+ roomStatus.textContent=`Joined ${room}`;
+ listenRoom();
+}
+function listenRoom(){
+ db.ref(`rooms/${room}/current`).on("value",s=>{
+  qi=s.val();if(qi>=0)renderQuestion();
+ });
+ db.ref(`rooms/${room}/answers`).on("value",s=>{
+  votes=[0,0,0,0];
+  s.forEach(a=>votes[a.val()]++);
+ });
+}
+function addQuestion(){
+ quiz.push({q:qText.value,o:[oA.value,oB.value,oC.value,oD.value],c:+correct.value});
+ db.ref(`rooms/${room}/quiz`).set(quiz);
+}
+function startQuiz(){qi=-1;quizScore=0;nextQuestion()}
+function nextQuestion(){
+ qi++;votes=[0,0,0,0];
+ db.ref(`rooms/${room}/current`).set(qi);
+ db.ref(`rooms/${room}/answers`).set({});
+ startQuizTimer();
+}
+function renderQuestion(){
+ const q=quiz[qi];if(!q)return;
+ hostQ.textContent=q.q;
+ answers.innerHTML="";
+ ["red","blue","yellow","green"].forEach((c,i)=>{
+  const b=document.createElement("button");
+  b.className=c;b.textContent=q.o[i];
+  b.onclick=()=>db.ref(`rooms/${room}/answers/${player}`).set(i);
+  answers.appendChild(b);
+ });
+}
+function startQuizTimer(){
+ qt=15;hostTimer.textContent=`Time: ${qt}`;
+ clearInterval(qtInt);
+ qtInt=setInterval(()=>{
+  qt--;hostTimer.textContent=`Time: ${qt}`;
+  if(qt<=0){clearInterval(qtInt);showResults()}
+ },1000);
+}
+function showResults(){
+ results.innerHTML="";
+ const q=quiz[qi];
+ votes.forEach((v,i)=>{
+  const bar=document.createElement("div");
+  bar.className="bar "+["red","blue","yellow","green"][i];
+  bar.style.width=`${v*60+60}px`;
+  bar.textContent=`${v} votes`;
+  if(i===q.c){bar.style.outline="4px solid black";quizScore+=1000;}
+  results.appendChild(bar);
+ });
+ db.ref(`leaderboards/quiz/${player}`).set(quizScore);
+}
+
+/* ================= LEADERBOARDS ================= */
+function loadLB(type,id){
+ db.ref(`leaderboards/${type}`).orderByValue().limitToLast(10).on("value",s=>{
+  const el=document.getElementById(id);el.innerHTML="";
+  const a=[];s.forEach(x=>a.push([x.key,x.val()]));
+  a.reverse().forEach(([n,v])=>{
+   const d=document.createElement("div");
+   d.textContent=`${n}: ${v}`;el.appendChild(d);
+  });
+ });
+}
+loadLB("guess","lbGuess");
+loadLB("151","lb151");
+loadLB("quiz","lbQuiz");
+</script>
+
+</body>
+</html>
